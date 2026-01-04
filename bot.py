@@ -12,7 +12,7 @@ from telegram.ext import (
     Filters, ConversationHandler, CommandHandler
 )
 
-TOKEN = "8380198058:AAFvq34yans-G13UXtAHOKgNeSMUhSJWFLc"
+TOKEN = "8380198058:AAHvWeLJhnHZLuIN5KE6bB2ZTqXfis3wzCA"
 CHANNEL_USERNAME = "@tesertdnjdjdj"
 SOURCE_CHANNEL = "https://t.me/s/qemat_Abshoda"
 
@@ -21,6 +21,9 @@ TEXT, EDIT_FORWARD, WEIGHT, WORK, PROFIT, SCHEDULE, MANAGE, SCHEDULE_TIME = rang
 
 # ---------- ذخیره آخرین قیمت ----------
 last_saved_price = None
+
+# ---------- زمان‌بندی پست‌ها ----------
+scheduled_posts = []
 
 # ---------- قیمت ----------
 def get_latest_abshode_price():
@@ -37,18 +40,22 @@ def get_latest_abshode_price():
         pass
     return last_saved_price
 
-# ---------- آپدیت خودکار هر ۵ دقیقه ----------
-def auto_update_price():
-    while True:
-        get_latest_abshode_price()
-        time.sleep(300)
-
-# ---------- زمان‌بندی پست‌ها ----------
-scheduled_posts = []
-
-def schedule_checker(bot):
+# ---------- حلقه بهینه چک قیمت ----------
+def price_scheduler():
     tz_now = pytz.timezone("Asia/Tehran")
     while True:
+        now = datetime.now(tz_now)
+        if 11 <= now.hour < 20:  # فقط بین 11 صبح تا 20 فعال باشد
+            get_latest_abshode_price()
+        time.sleep(300)  # هر 5 دقیقه یک بار
+
+# ---------- حلقه بهینه زمان‌بندی پست ----------
+def post_scheduler(bot):
+    tz_now = pytz.timezone("Asia/Tehran")
+    while True:
+        if not scheduled_posts:
+            time.sleep(60)
+            continue
         now = datetime.now(tz_now)
         for post in scheduled_posts[:]:
             if post["time"] <= now:
@@ -70,7 +77,8 @@ def schedule_checker(bot):
                     else:
                         bot.edit_message_text(chat_id=CHANNEL_USERNAME, message_id=p["message_id"], text=p["text"], reply_markup=keyboard)
                 scheduled_posts.remove(post)
-        time.sleep(60)
+        # فاصله کوتاه ولی فقط وقتی پستی داریم
+        time.sleep(10)
 
 # ---------- کیبوردها ----------
 def main_menu():
@@ -92,7 +100,6 @@ def publish_keyboard():
         [InlineKeyboardButton("❌ انصراف", callback_data="cancel")]
     ])
 
-# دکمه‌های امروز، فردا و پس فردا در یک سطر
 def day_keyboard():
     return InlineKeyboardMarkup([
         [
@@ -103,14 +110,13 @@ def day_keyboard():
         [InlineKeyboardButton("❌ انصراف", callback_data="cancel")]
     ])
 
-# ---------- start ----------
+# ---------- توابع اصلی کد0 ----------
 def start(update: Update, context: CallbackContext):
     if update.message:
         update.message.reply_text("منوی اصلی 👇", reply_markup=main_menu())
     else:
         update.callback_query.message.reply_text("منوی اصلی 👇", reply_markup=main_menu())
 
-# ---------- دکمه‌های منو ----------
 def menu_button(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
@@ -127,7 +133,6 @@ def menu_button(update: Update, context: CallbackContext):
     if query.data == "manage_schedule":
         return show_scheduled(update, context)
 
-# ---------- نمایش و مدیریت زمان‌بندی‌ها ----------
 def show_scheduled(update: Update, context: CallbackContext):
     if not scheduled_posts:
         update.callback_query.message.reply_text("❌ هیچ پست زمان‌بندی‌شده‌ای وجود ندارد.")
@@ -176,7 +181,6 @@ def manage_post(update: Update, context: CallbackContext):
         start(update, context)
         return ConversationHandler.END
 
-# ---------- انصراف ----------
 def cancel(update: Update, context: CallbackContext):
     context.user_data.clear()
     if update.callback_query:
@@ -187,7 +191,6 @@ def cancel(update: Update, context: CallbackContext):
     start(update, context)
     return ConversationHandler.END
 
-# ---------- پست جدید ----------
 def post_text(update: Update, context: CallbackContext):
     context.user_data["mode"] = "new"
     context.user_data["post"] = {}
@@ -200,7 +203,6 @@ def post_text(update: Update, context: CallbackContext):
     update.message.reply_text("📌 وزن (گرم):", reply_markup=cancel_keyboard())
     return WEIGHT
 
-# ---------- ویرایش پست ----------
 def edit_forward(update: Update, context: CallbackContext):
     msg = update.message
     if not msg.forward_from_chat or msg.forward_from_chat.username != CHANNEL_USERNAME.replace("@", ""):
@@ -215,7 +217,6 @@ def edit_forward(update: Update, context: CallbackContext):
     msg.reply_text("📌 وزن (گرم):", reply_markup=cancel_keyboard())
     return WEIGHT
 
-# ---------- مراحل مشترک ----------
 def post_weight(update: Update, context: CallbackContext):
     context.user_data["post"]["weight"] = float(update.message.text)
     update.message.reply_text("📌 اجرت (%):", reply_markup=cancel_keyboard())
@@ -241,10 +242,8 @@ def post_profit(update: Update, context: CallbackContext):
     update.message.reply_text("📌 انتخاب حالت انتشار:", reply_markup=publish_keyboard())
     return SCHEDULE
 
-# ---------- انتشار فوری یا زمان‌بندی ----------
 def post_schedule(update: Update, context: CallbackContext):
     tz_now = pytz.timezone("Asia/Tehran")
-
     if update.callback_query:
         query = update.callback_query
         query.answer()
@@ -265,7 +264,6 @@ def post_schedule(update: Update, context: CallbackContext):
             p = context.user_data["post"]
             mode = context.user_data["mode"]
             sent = send_post(query.bot, p, mode)
-            # ✅ اصلاح: لینک مستقیم با متن "پست" اضافه شد
             query.message.reply_text(
                 f"✅ [پست](https://t.me/{CHANNEL_USERNAME[1:]}/{sent.message_id}) منتشر شد",
                 parse_mode="Markdown"
@@ -275,7 +273,6 @@ def post_schedule(update: Update, context: CallbackContext):
             return ConversationHandler.END
         elif query.data == "cancel":
             return cancel(update, context)
-
     elif update.message:
         if "schedule_date" not in context.user_data:
             try:
@@ -325,7 +322,6 @@ def send_post(bot, post, mode):
             msg = bot.send_message(CHANNEL_USERNAME, post["text"], reply_markup=keyboard)
         return msg
 
-# ---------- Popup ----------
 def price_button(update: Update, context: CallbackContext):
     p = last_saved_price
     if not p:
@@ -369,11 +365,12 @@ def main():
 
     dp.add_handler(conv)
 
-    threading.Thread(target=auto_update_price, daemon=True).start()
-    threading.Thread(target=lambda: schedule_checker(updater.bot), daemon=True).start()
+    # ---------- شروع حلقه‌ها ----------
+    threading.Thread(target=price_scheduler, daemon=True).start()
+    threading.Thread(target=lambda: post_scheduler(updater.bot), daemon=True).start()
 
     updater.start_polling()
-    #updater.idle()
+    updater.idle()
 
 if __name__ == "__main__":
     main()
