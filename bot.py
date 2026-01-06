@@ -2,6 +2,7 @@ import re
 import requests
 import threading
 import time
+import os
 from datetime import datetime, timedelta
 import pytz
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -11,7 +12,7 @@ from telegram.ext import (
     Filters, ConversationHandler, CommandHandler
 )
 
-TOKEN = "8269295851:AAFfKGYRkZMsow8MmYDnYl5Z2ZKvsstYJak"
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHANNEL_USERNAME = "@tesertdnjdjdj"
 SOURCE_CHANNEL = "https://t.me/s/qemat_Abshoda"
 
@@ -428,3 +429,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
