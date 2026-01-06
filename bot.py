@@ -330,7 +330,7 @@ def post_text(update: Update, context: CallbackContext):
     else:
         context.user_data["post"]["photo"] = None
         context.user_data["post"]["text"] = update.message.text
-    update.message.reply_text(""⚖️ وزن را وارد کنید:"", reply_markup=cancel_keyboard())
+    update.message.reply_text("⚖️ وزن را وارد کنید:", reply_markup=cancel_keyboard())
     return WEIGHT
 
 # ---------- ویرایش پست ----------
@@ -546,3 +546,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
