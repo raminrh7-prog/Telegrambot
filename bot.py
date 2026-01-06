@@ -2,9 +2,10 @@ import re
 import requests
 import threading
 import time
-import os
 from datetime import datetime, timedelta
 import pytz
+import jdatetime
+import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Updater, CallbackContext,
@@ -12,12 +13,87 @@ from telegram.ext import (
     Filters, ConversationHandler, CommandHandler
 )
 
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHANNEL_USERNAME = "@tesertdnjdjdj"
 SOURCE_CHANNEL = "https://t.me/s/qemat_Abshoda"
 
+# ---------- تابع ساخت تقویم شمسی (اضافه شده) ----------
+def create_calendar(year, month):
+    tehran_tz = pytz.timezone("Asia/Tehran")
+    today_dt = datetime.now(tehran_tz)
+    today = jdatetime.date.fromgregorian(date=today_dt.date())
+
+    first_day = jdatetime.date(year, month, 1)
+    month_name = first_day.j_months_fa[month-1]
+
+    keyboard = []
+    # ردیف اول: نام ماه و سال
+    keyboard.append([InlineKeyboardButton(f"{month_name} {year}", callback_data="ignore")])
+
+    # ردیف دوم: روزهای هفته
+    week_days = ["ج", "پ", "چ", "س", "د", "ی", "ش"]
+    keyboard.append([InlineKeyboardButton(day, callback_data="ignore") for day in week_days])
+
+    # محاسبه روزهای ماه
+    first_day_weekday = first_day.weekday() 
+    if month <= 6:
+        days_in_month = 31
+    elif month <= 11:
+        days_in_month = 30
+    else:
+        days_in_month = 30 if first_day.is_leap() else 29
+
+    temp_row = [InlineKeyboardButton(" ", callback_data="ignore")] * first_day_weekday
+
+    for day in range(1, days_in_month + 1):
+        display_text = str(day)
+        if year == today.year and month == today.month and day == today.day:
+            display_text = f"📍 {day}"
+
+        temp_row.append(InlineKeyboardButton(display_text, callback_data=f"cal_d_{year}_{month}_{day}"))
+
+        if len(temp_row) == 7:
+            temp_row.reverse() # برای نمایش راست به چپ در تلگرام
+            keyboard.append(temp_row)
+            temp_row = []
+
+    if temp_row:
+        temp_row += [InlineKeyboardButton(" ", callback_data="ignore")] * (7 - len(temp_row))
+        temp_row.reverse()
+        keyboard.append(temp_row)
+
+    # دکمه‌های جابجایی ماه
+    next_m, next_y = (month + 1, year) if month < 12 else (1, year + 1)
+    prev_m, prev_y = (month - 1, year) if month > 1 else (12, year - 1)
+
+    keyboard.append([
+        InlineKeyboardButton("➡️ ماه بعد", callback_data=f"cal_m_{next_y}_{next_m}"),
+        InlineKeyboardButton("ماه قبل ⬅️", callback_data=f"cal_m_{prev_y}_{prev_m}")
+    ])
+    keyboard.append([InlineKeyboardButton("❌ انصراف", callback_data="cancel")])
+    return InlineKeyboardMarkup(keyboard)
+
+# ---------- تابع بررسی ادمین بودن (قابلیت جدید) ----------
+def is_user_admin(bot, user_id):
+    try:
+        member = bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        # بررسی اینکه آیا کاربر سازنده (creator) یا مدیر (administrator) است
+        return member.status in ['creator', 'administrator']
+    except Exception:
+        return False
+
 # مراحل
 TEXT, EDIT_FORWARD, WEIGHT, WORK, PROFIT, SCHEDULE, MANAGE, SCHEDULE_TIME = range(8)
+
+# ---------- تابع تبدیل عدد به فارسی ----------
+def e2p(number):
+    # تبدیل به عدد صحیح در صورت امکان برای زیبایی (مثلاً 38.0 بشود 38)
+    if float(number) == int(float(number)):
+        number = int(float(number))
+
+    number = str(number)
+    translations = {'0': '۰', '1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹'}
+    return ''.join(translations.get(char, char) for char in number)
 
 # ---------- کش قیمت ----------
 last_saved_price = None
@@ -67,12 +143,18 @@ def schedule_post_with_timer(bot, post_data):
         p = post_data["post"]
         mode = post_data["mode"]
         callback_gold = f"gold|{p['weight']}|{p['work']}|{p['profit']}"
+
+        # --- تغییر: جمع اجرت و سود برای نمایش در دکمه ---
+        total_percent = float(p['work']) + float(p['profit'])
+        work_val_farsi = e2p(total_percent)
+        btn_text = f"💎 قیمت روز محصول با اجرت {work_val_farsi} درصد"
+
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💎 قیمت روز محصول", callback_data=callback_gold)],
+            [InlineKeyboardButton(btn_text, callback_data=callback_gold)],
             [InlineKeyboardButton("💰 قیمت لحظه ای طلا", callback_data="price")],
             [InlineKeyboardButton("👈 مشاوره و ثبت سفارش 👉", url="http://t.me/onyxgold_admin")]
-
         ])
+
         if mode == "new":
             if p.get("photo"):
                 bot.send_photo(CHANNEL_USERNAME, p["photo"], caption=p["text"], reply_markup=keyboard)
@@ -83,8 +165,12 @@ def schedule_post_with_timer(bot, post_data):
                 bot.edit_message_caption(chat_id=CHANNEL_USERNAME, message_id=p["message_id"], caption=p["text"], reply_markup=keyboard)
             else:
                 bot.edit_message_text(chat_id=CHANNEL_USERNAME, message_id=p["message_id"], text=p["text"], reply_markup=keyboard)
-        scheduled_timers.remove(timer)
-        scheduled_posts.remove(post_data)
+
+        try:
+            scheduled_timers.remove(timer)
+            scheduled_posts.remove(post_data)
+        except:
+            pass
 
     from threading import Timer
     timer = Timer(delay, send_scheduled_post)
@@ -128,6 +214,12 @@ def day_keyboard():
 
 # ---------- start ----------
 def start(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    # چک کردن ادمین بودن
+    if not is_user_admin(context.bot, user_id):
+        update.effective_message.reply_text("❌ دسترسی محدود! فقط ادمین‌های کانال مجاز به استفاده از ربات هستند.")
+        return
+
     if update.message:
         update.message.reply_text("منوی اصلی 👇", reply_markup=main_menu())
     else:
@@ -136,6 +228,13 @@ def start(update: Update, context: CallbackContext):
 # ---------- دکمه‌های منو ----------
 def menu_button(update: Update, context: CallbackContext):
     query = update.callback_query
+    user_id = query.from_user.id
+
+    # چک کردن ادمین بودن در هنگام زدن دکمه‌ها
+    if not is_user_admin(context.bot, user_id):
+        query.answer("❌ شما ادمین نیستید و دسترسی ندارید!", show_alert=True)
+        return ConversationHandler.END
+
     query.answer()
     context.user_data.clear()
     if query.data == "new_post":
@@ -164,7 +263,7 @@ def show_scheduled(update: Update, context: CallbackContext):
         ])
     buttons.append([InlineKeyboardButton("⬅️ بازگشت", callback_data="back_to_main")])
     update.callback_query.message.reply_text(
-        "📌 پست‌های زمان‌بندی‌شده:",
+        "⏱  پست‌های زمان‌بندی‌شده:",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
     return MANAGE
@@ -193,12 +292,15 @@ def manage_post(update: Update, context: CallbackContext):
     elif data == "edit_time":
         idx = context.user_data.get("manage_index")
         if idx is not None and idx < len(scheduled_posts):
-            # ← تنها خط تغییر داده شده برای رفع KeyError
             context.user_data["post"] = scheduled_posts[idx]["post"]
             context.user_data["mode"] = scheduled_posts[idx]["mode"]
+
+        # تغییر: نمایش تقویم به جای دکمه‌های امروز/فردا
+        tz_now = pytz.timezone("Asia/Tehran")
+        now_sh = jdatetime.datetime.now(tz_now)
         query.message.reply_text(
-            "📌 انتخاب روز یا تاریخ را با فرمت YYYYMMDD وارد کنید:",
-            reply_markup=day_keyboard()
+            "📅 انتخاب تاریخ جدید از تقویم:",
+            reply_markup=create_calendar(now_sh.year, now_sh.month)
         )
         return SCHEDULE
     elif data == "back_to_scheduled":
@@ -228,7 +330,7 @@ def post_text(update: Update, context: CallbackContext):
     else:
         context.user_data["post"]["photo"] = None
         context.user_data["post"]["text"] = update.message.text
-    update.message.reply_text("📌 وزن (گرم):", reply_markup=cancel_keyboard())
+    update.message.reply_text(""⚖️ وزن را وارد کنید:"", reply_markup=cancel_keyboard())
     return WEIGHT
 
 # ---------- ویرایش پست ----------
@@ -243,18 +345,18 @@ def edit_forward(update: Update, context: CallbackContext):
         "photo": msg.photo[-1].file_id if msg.photo else None,
         "text": msg.caption or msg.text or ""
     }
-    msg.reply_text("📌 وزن (گرم):", reply_markup=cancel_keyboard())
+    msg.reply_text("⚖️ وزن را وارد کنید:", reply_markup=cancel_keyboard())
     return WEIGHT
 
 # ---------- مراحل مشترک ----------
 def post_weight(update: Update, context: CallbackContext):
     context.user_data["post"]["weight"] = float(update.message.text)
-    update.message.reply_text("📌 اجرت (%):", reply_markup=cancel_keyboard())
+    update.message.reply_text("🛠 اجرت (%):", reply_markup=cancel_keyboard())
     return WORK
 
 def post_work(update: Update, context: CallbackContext):
     context.user_data["post"]["work"] = float(update.message.text)
-    update.message.reply_text("📌 سود (%):", reply_markup=cancel_keyboard())
+    update.message.reply_text("📈 سود (%):", reply_markup=cancel_keyboard())
     return PROFIT
 
 def post_profit(update: Update, context: CallbackContext):
@@ -269,33 +371,40 @@ def post_profit(update: Update, context: CallbackContext):
         context.user_data.clear()
         start(update, context)
         return ConversationHandler.END
-    update.message.reply_text("📌 انتخاب حالت انتشار:", reply_markup=publish_keyboard())
+    update.message.reply_text("🚀 انتخاب نحوه انتشار:", reply_markup=publish_keyboard())
     return SCHEDULE
 
-# ---------- انتشار فوری یا زمان‌بندی ----------
+# ---------- انتشار فوری یا زمان‌بندی (تغییر یافته برای تقویم) ----------
 def post_schedule(update: Update, context: CallbackContext):
     tz_now = pytz.timezone("Asia/Tehran")
     if update.callback_query:
         query = update.callback_query
         query.answer()
-        if query.data in ["today", "tomorrow", "day_after"]:
-            if query.data == "today":
-                day = datetime.now(tz_now)
-            elif query.data == "tomorrow":
-                day = datetime.now(tz_now) + timedelta(days=1)
-            else:
-                day = datetime.now(tz_now) + timedelta(days=2)
-            context.user_data["schedule_date"] = day.strftime("%Y-%m-%d")
+
+        # مدیریت دکمه‌های تقویم
+        if query.data.startswith("cal_m_"):
+            _, _, y, m = query.data.split("_")
+            query.edit_message_reply_markup(reply_markup=create_calendar(int(y), int(m)))
+            return SCHEDULE
+
+        elif query.data.startswith("cal_d_"):
+            _, _, y, m, d = query.data.split("_")
+            # ذخیره تاریخ به صورت میلادی برای پردازش نهایی
+            sh_dt = jdatetime.date(int(y), int(m), int(d))
+            context.user_data["schedule_date"] = sh_dt.togregorian().strftime("%Y-%m-%d")
             query.message.reply_text(
-                f"📌 روز انتخاب شد: {day.strftime('%Y-%m-%d')}\nلطفاً ساعت را به صورت HHMM وارد کنید:"
+                f"✅ تاریخ انتخاب شد: {y}/{m}/{d}\nلطفاً ساعت را به صورت HHMM وارد کنید:"
             )
             return SCHEDULE_TIME
+
         elif query.data == "schedule":
+            now_sh = jdatetime.datetime.now(tz_now)
             query.message.reply_text(
-                "📌 انتخاب روز یا تاریخ را با فرمت YYYYMMDD وارد کنید:",
-                reply_markup=day_keyboard()
+                "📅 انتخاب تاریخ از تقویم:",
+                reply_markup=create_calendar(now_sh.year, now_sh.month)
             )
             return SCHEDULE
+
         elif query.data == "now":
             p = context.user_data["post"]
             mode = context.user_data["mode"]
@@ -307,9 +416,12 @@ def post_schedule(update: Update, context: CallbackContext):
             context.user_data.clear()
             start(update, context)
             return ConversationHandler.END
+
         elif query.data == "cancel":
             return cancel(update, context)
+
     elif update.message:
+        # حفظ قابلیت ورود دستی تاریخ به صورت YYYYMMDD
         if "schedule_date" not in context.user_data:
             try:
                 post_date = datetime.strptime(update.message.text, "%Y%m%d")
@@ -318,48 +430,53 @@ def post_schedule(update: Update, context: CallbackContext):
                 return SCHEDULE_TIME
             except ValueError:
                 update.message.reply_text("❌ فرمت تاریخ اشتباه است")
-                update.message.reply_text("📌 انتخاب روز:", reply_markup=day_keyboard())
+                now_sh = jdatetime.datetime.now(tz_now)
+                update.message.reply_text("📅 تاریخ جدید:", reply_markup=create_calendar(now_sh.year, now_sh.month))
                 return SCHEDULE
         else:
-            try:
-                hour = int(update.message.text[:2])
-                minute = int(update.message.text[2:])
-                dt_str = f"{context.user_data['schedule_date']} {hour:02d}:{minute:02d}"
-                post_time = tz_now.localize(datetime.strptime(dt_str, "%Y-%m-%d %H:%M"))
+            # این بخش مربوط به دریافت ساعت است که در تابع SCHEDULE_TIME مدیریت می‌شود
+            pass
 
-                # ← اگر پست قبلا زمان‌بندی شده بود، Timer قدیمی را لغو کن
-                if context.user_data.get("manage_index") is not None:
-                    idx = context.user_data["manage_index"]
-                    cancel_scheduled_post(idx)
+# تابع جدید برای مدیریت دریافت ساعت (برای جلوگیری از تداخل با منطق تقویم)
+def post_schedule_time_handler(update: Update, context: CallbackContext):
+    tz_now = pytz.timezone("Asia/Tehran")
+    try:
+        hour = int(update.message.text[:2])
+        minute = int(update.message.text[2:])
+        dt_str = f"{context.user_data['schedule_date']} {hour:02d}:{minute:02d}"
+        post_time = tz_now.localize(datetime.strptime(dt_str, "%Y-%m-%d %H:%M"))
 
-                    # همان پست را با زمان جدید دوباره زمان‌بندی کن
-                    schedule_post_with_timer(update.message.bot, {
-                        "post": context.user_data["post"],
-                        "mode": context.user_data["mode"],
-                        "time": post_time
-                    })
-                else:
-                    # پست جدید
-                    schedule_post_with_timer(update.message.bot, {
-                        "post": context.user_data["post"],
-                        "mode": context.user_data["mode"],
-                        "time": post_time
-                    })
+        if context.user_data.get("manage_index") is not None:
+            idx = context.user_data["manage_index"]
+            cancel_scheduled_post(idx)
 
-                update.message.reply_text(
-                    f"✅ پست زمان‌بندی شد برای {post_time.strftime('%Y-%m-%d %H:%M')} تهران"
-                )
-                context.user_data.clear()
-                start(update, context)
-                return ConversationHandler.END
-            except ValueError:
-                update.message.reply_text("❌ فرمت ساعت اشتباه است")
-                return SCHEDULE_TIME
+        schedule_post_with_timer(update.message.bot, {
+            "post": context.user_data["post"],
+            "mode": context.user_data["mode"],
+            "time": post_time
+        })
+
+        update.message.reply_text(
+            f"✅ پست زمان‌بندی شد برای {post_time.strftime('%Y-%m-%d %H:%M')} تهران"
+        )
+        context.user_data.clear()
+        start(update, context)
+        return ConversationHandler.END
+    except ValueError:
+        update.message.reply_text("❌ فرمت ساعت اشتباه است. مثال: 1430")
+        return SCHEDULE_TIME
+
 # ---------- ارسال پست ----------
 def send_post(bot, post, mode):
     callback_gold = f"gold|{post['weight']}|{post['work']}|{post['profit']}"
+
+    # --- تغییر: جمع اجرت و سود برای نمایش در دکمه ---
+    total_percent = float(post['work']) + float(post['profit'])
+    work_val_farsi = e2p(total_percent)
+    btn_text = f"💎 قیمت روز محصول با اجرت {work_val_farsi} درصد"
+
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💎 قیمت روز محصول", callback_data=callback_gold)],
+        [InlineKeyboardButton(btn_text, callback_data=callback_gold)],
         [InlineKeyboardButton("💰 قیمت لحظه ای طلا", callback_data="price")],
         [InlineKeyboardButton("👈 مشاوره و ثبت سفارش 👉", url="http://t.me/onyxgold_admin")]
     ])
@@ -417,7 +534,7 @@ def main():
                 MessageHandler(Filters.text, post_schedule),
                 CallbackQueryHandler(post_schedule)
             ],
-            SCHEDULE_TIME: [MessageHandler(Filters.text, post_schedule)],
+            SCHEDULE_TIME: [MessageHandler(Filters.text, post_schedule_time_handler)],
             MANAGE: [CallbackQueryHandler(manage_post)]
         },
         fallbacks=[CallbackQueryHandler(cancel, pattern="cancel")]
@@ -429,4 +546,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
