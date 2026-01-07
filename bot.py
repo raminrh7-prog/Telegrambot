@@ -17,7 +17,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHANNEL_USERNAME = "@tesertdnjdjdj"
 SOURCE_CHANNEL = "https://t.me/s/qemat_Abshoda"
 
-# ---------- تابع ساخت تقویم شمسی (اضافه شده) ----------
+# ---------- تابع ساخت تقویم شمسی ----------
 def create_calendar(year, month):
     tehran_tz = pytz.timezone("Asia/Tehran")
     today_dt = datetime.now(tehran_tz)
@@ -27,14 +27,11 @@ def create_calendar(year, month):
     month_name = first_day.j_months_fa[month-1]
 
     keyboard = []
-    # ردیف اول: نام ماه و سال
     keyboard.append([InlineKeyboardButton(f"{month_name} {year}", callback_data="ignore")])
 
-    # ردیف دوم: روزهای هفته
     week_days = ["ج", "پ", "چ", "س", "د", "ی", "ش"]
     keyboard.append([InlineKeyboardButton(day, callback_data="ignore") for day in week_days])
 
-    # محاسبه روزهای ماه
     first_day_weekday = first_day.weekday() 
     if month <= 6:
         days_in_month = 31
@@ -48,12 +45,12 @@ def create_calendar(year, month):
     for day in range(1, days_in_month + 1):
         display_text = str(day)
         if year == today.year and month == today.month and day == today.day:
-            display_text = f"📍 {day}"
+            display_text = f"📍{day}"
 
         temp_row.append(InlineKeyboardButton(display_text, callback_data=f"cal_d_{year}_{month}_{day}"))
 
         if len(temp_row) == 7:
-            temp_row.reverse() # برای نمایش راست به چپ در تلگرام
+            temp_row.reverse()
             keyboard.append(temp_row)
             temp_row = []
 
@@ -62,7 +59,6 @@ def create_calendar(year, month):
         temp_row.reverse()
         keyboard.append(temp_row)
 
-    # دکمه‌های جابجایی ماه
     next_m, next_y = (month + 1, year) if month < 12 else (1, year + 1)
     prev_m, prev_y = (month - 1, year) if month > 1 else (12, year - 1)
 
@@ -73,11 +69,10 @@ def create_calendar(year, month):
     keyboard.append([InlineKeyboardButton("❌ انصراف", callback_data="cancel")])
     return InlineKeyboardMarkup(keyboard)
 
-# ---------- تابع بررسی ادمین بودن (قابلیت جدید) ----------
+# ---------- تابع بررسی ادمین بودن ----------
 def is_user_admin(bot, user_id):
     try:
         member = bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        # بررسی اینکه آیا کاربر سازنده (creator) یا مدیر (administrator) است
         return member.status in ['creator', 'administrator']
     except Exception:
         return False
@@ -87,7 +82,6 @@ TEXT, EDIT_FORWARD, WEIGHT, WORK, PROFIT, SCHEDULE, MANAGE, SCHEDULE_TIME = rang
 
 # ---------- تابع تبدیل عدد به فارسی ----------
 def e2p(number):
-    # تبدیل به عدد صحیح در صورت امکان برای زیبایی (مثلاً 38.0 بشود 38)
     if float(number) == int(float(number)):
         number = int(float(number))
 
@@ -98,7 +92,7 @@ def e2p(number):
 # ---------- کش قیمت ----------
 last_saved_price = None
 last_price_time = None
-PRICE_TTL = 600  # 10 دقیقه
+PRICE_TTL = 600
 
 # ---------- قیمت ----------
 def get_latest_abshode_price():
@@ -144,14 +138,13 @@ def schedule_post_with_timer(bot, post_data):
         mode = post_data["mode"]
         callback_gold = f"gold|{p['weight']}|{p['work']}|{p['profit']}"
 
-        # --- تغییر: جمع اجرت و سود برای نمایش در دکمه ---
         total_percent = float(p['work']) + float(p['profit'])
         work_val_farsi = e2p(total_percent)
         btn_text = f"💎 قیمت روز محصول با اجرت {work_val_farsi} درصد"
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(btn_text, callback_data=callback_gold)],
-            [InlineKeyboardButton("💰 قیمت لحظه ای طلا", callback_data="price")],
+            [InlineKeyboardButton("💰 قیمت لحظه ای هر گرم طلای ۱۸ عیار", callback_data="price")],
             [InlineKeyboardButton("👈 مشاوره و ثبت سفارش 👉", url="http://t.me/onyxgold_admin")]
         ])
 
@@ -202,20 +195,9 @@ def publish_keyboard():
         [InlineKeyboardButton("❌ انصراف", callback_data="cancel")]
     ])
 
-def day_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("پس‌فردا", callback_data="day_after"),
-            InlineKeyboardButton("فردا", callback_data="tomorrow"),
-            InlineKeyboardButton("امروز", callback_data="today")
-        ],
-        [InlineKeyboardButton("❌ انصراف", callback_data="cancel")]
-    ])
-
 # ---------- start ----------
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    # چک کردن ادمین بودن
     if not is_user_admin(context.bot, user_id):
         update.effective_message.reply_text("❌ دسترسی محدود! فقط ادمین‌های کانال مجاز به استفاده از ربات هستند.")
         return
@@ -230,7 +212,6 @@ def menu_button(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
 
-    # چک کردن ادمین بودن در هنگام زدن دکمه‌ها
     if not is_user_admin(context.bot, user_id):
         query.answer("❌ شما ادمین نیستید و دسترسی ندارید!", show_alert=True)
         return ConversationHandler.END
@@ -295,7 +276,6 @@ def manage_post(update: Update, context: CallbackContext):
             context.user_data["post"] = scheduled_posts[idx]["post"]
             context.user_data["mode"] = scheduled_posts[idx]["mode"]
 
-        # تغییر: نمایش تقویم به جای دکمه‌های امروز/فردا
         tz_now = pytz.timezone("Asia/Tehran")
         now_sh = jdatetime.datetime.now(tz_now)
         query.message.reply_text(
@@ -374,14 +354,13 @@ def post_profit(update: Update, context: CallbackContext):
     update.message.reply_text("🚀 انتخاب نحوه انتشار:", reply_markup=publish_keyboard())
     return SCHEDULE
 
-# ---------- انتشار فوری یا زمان‌بندی (تغییر یافته برای تقویم) ----------
+# ---------- انتشار فوری یا زمان‌بندی ----------
 def post_schedule(update: Update, context: CallbackContext):
     tz_now = pytz.timezone("Asia/Tehran")
     if update.callback_query:
         query = update.callback_query
         query.answer()
 
-        # مدیریت دکمه‌های تقویم
         if query.data.startswith("cal_m_"):
             _, _, y, m = query.data.split("_")
             query.edit_message_reply_markup(reply_markup=create_calendar(int(y), int(m)))
@@ -389,7 +368,6 @@ def post_schedule(update: Update, context: CallbackContext):
 
         elif query.data.startswith("cal_d_"):
             _, _, y, m, d = query.data.split("_")
-            # ذخیره تاریخ به صورت میلادی برای پردازش نهایی
             sh_dt = jdatetime.date(int(y), int(m), int(d))
             context.user_data["schedule_date"] = sh_dt.togregorian().strftime("%Y-%m-%d")
             query.message.reply_text(
@@ -421,7 +399,6 @@ def post_schedule(update: Update, context: CallbackContext):
             return cancel(update, context)
 
     elif update.message:
-        # حفظ قابلیت ورود دستی تاریخ به صورت YYYYMMDD
         if "schedule_date" not in context.user_data:
             try:
                 post_date = datetime.strptime(update.message.text, "%Y%m%d")
@@ -433,11 +410,8 @@ def post_schedule(update: Update, context: CallbackContext):
                 now_sh = jdatetime.datetime.now(tz_now)
                 update.message.reply_text("📅 تاریخ جدید:", reply_markup=create_calendar(now_sh.year, now_sh.month))
                 return SCHEDULE
-        else:
-            # این بخش مربوط به دریافت ساعت است که در تابع SCHEDULE_TIME مدیریت می‌شود
-            pass
 
-# تابع جدید برای مدیریت دریافت ساعت (برای جلوگیری از تداخل با منطق تقویم)
+# ---------- مدیریت دریافت ساعت ----------
 def post_schedule_time_handler(update: Update, context: CallbackContext):
     tz_now = pytz.timezone("Asia/Tehran")
     try:
@@ -470,14 +444,13 @@ def post_schedule_time_handler(update: Update, context: CallbackContext):
 def send_post(bot, post, mode):
     callback_gold = f"gold|{post['weight']}|{post['work']}|{post['profit']}"
 
-    # --- تغییر: جمع اجرت و سود برای نمایش در دکمه ---
     total_percent = float(post['work']) + float(post['profit'])
     work_val_farsi = e2p(total_percent)
     btn_text = f"💎 قیمت روز محصول با اجرت {work_val_farsi} درصد"
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(btn_text, callback_data=callback_gold)],
-        [InlineKeyboardButton("💰 قیمت لحظه ای طلا", callback_data="price")],
+        [InlineKeyboardButton("💰 قیمت لحظه ای هر گرم طلای ۱۸ عیار", callback_data="price")],
         [InlineKeyboardButton("👈 مشاوره و ثبت سفارش 👉", url="http://t.me/onyxgold_admin")]
     ])
     if mode == "edit" and "message_id" in post:
@@ -546,4 +519,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
